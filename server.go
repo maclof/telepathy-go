@@ -8,6 +8,7 @@ import (
 	"time"
 	"sync"
 	"errors"
+	"crypto/tls"
 	"encoding/binary"
 
 	"github.com/emirpasic/gods/maps/hashmap"
@@ -15,6 +16,7 @@ import (
 )
 
 type Server struct {
+	config                *ServerConfig
 	listener              net.Listener
 	isRunning             bool
 	connIdCounter         int
@@ -25,6 +27,12 @@ type Server struct {
 	sendQueue             *goconcurrentqueue.FIFO
 }
 
+type ServerConfig struct {
+	TlsEnabled bool
+	TlsCert    string
+	TlsKey     string
+}
+
 func (server *Server) Start(port int) error {
 	if server.isRunning {
 		return errors.New("The server is already running!")
@@ -32,9 +40,24 @@ func (server *Server) Start(port int) error {
 
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
 
-	log.Printf("Starting telepathy server on: %s", addr)
+	log.Printf("Starting telepathy server on: %s (tls enabled: %v)", addr, server.config.TlsEnabled)
 
-	listener, err := net.Listen("tcp", addr)
+	var listener net.Listener
+	var err error
+	if server.config.TlsEnabled {
+		cert, err := tls.LoadX509KeyPair(server.config.TlsCert, server.config.TlsKey)
+		if err != nil {
+			log.Fatalf("Failed to load TLS key pair: %s", err.Error())
+		}
+
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+
+		listener, err = tls.Listen("tcp", addr, tlsConfig)
+	} else {
+		listener, err = net.Listen("tcp", addr)
+	}
 	if err != nil {
 		log.Fatalf("Error starting server: %s", err.Error())
 	}
@@ -69,18 +92,16 @@ func (server *Server) handleConnections() {
 			continue
 		}
 
-		tcpConn := conn.(*net.TCPConn)
+		// err = tcpConn.SetNoDelay(true)
+		// if err != nil {
+		// 	log.Printf("Failed to set 'no delay' option for new connection: %s", err.Error())
+		// }
 
-		err = tcpConn.SetNoDelay(true)
-		if err != nil {
-			log.Printf("Failed to set 'no delay' option for new connection: %s", err.Error())
-		}
-
-		tcpConn.SetReadBuffer(MAX_MESSAGE_SIZE)
-		tcpConn.SetWriteBuffer(MAX_MESSAGE_SIZE)
+		// conn.SetReadBuffer(MAX_MESSAGE_SIZE)
+		// conn.SetWriteBuffer(MAX_MESSAGE_SIZE)
 
 		client := &serverClient{
-			conn: tcpConn,
+			conn: conn,
 			connId: server.nextConnectionId(),
 			connected: true,
 			sendQueue: goconcurrentqueue.NewFIFO(),
@@ -109,7 +130,7 @@ func (server *Server) handleClientConnection(client *serverClient) {
 	for {
 		recvHeaderBuf = make([]byte, 4)
 
-		client.conn.SetReadDeadline(time.Now().Add(time.Millisecond * 10))
+		client.conn.SetReadDeadline(time.Now().Add(time.Millisecond * 1000))
 		numBytes, err := client.conn.Read(recvHeaderBuf)
 		if err != nil {
 			// if err, ok := err.(net.Error); ok && err.Timeout() || err == io.EOF {
@@ -235,7 +256,7 @@ func (server *Server) Send(connId int, data []byte) {
 }
 
 type serverClient struct {
-	conn           *net.TCPConn
+	conn           net.Conn
 	connId         int
 	connected      bool
 	sendQueue      *goconcurrentqueue.FIFO
@@ -270,11 +291,11 @@ func (client *serverClient) processSendQueue() {
 			sendBuf = append(sendBuf, message.data...)
 		}
 
-		// debugMsg := fmt.Sprintf("sendBuf - ")
-		// for i := 0; i < len(sendBuf); i++ {
-		// 	debugMsg += fmt.Sprintf("%d ", sendBuf[i])
-		// }
-		// log.Println(debugMsg)
+		debugMsg := fmt.Sprintf("sendBuf len(%d) - ", len(sendBuf))
+		for i := 0; i < len(sendBuf); i++ {
+			debugMsg += fmt.Sprintf("%d ", sendBuf[i])
+		}
+		log.Println(debugMsg)
 
 		client.conn.Write(sendBuf)
 
@@ -287,8 +308,9 @@ type serverSendMessage struct {
 	data   []byte
 }
 
-func NewServer() *Server {
+func NewServer(config *ServerConfig) *Server {
 	return &Server{
+		config: config,
 		isRunning: false,
 		connIdCounter: 0,
 		connectedClients: hashmap.New(),

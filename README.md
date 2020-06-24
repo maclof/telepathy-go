@@ -1,5 +1,7 @@
 # Telepathy-Go
+
 A Golang port of the Telepathy library (https://github.com/vis2k/Telepathy)
+
 Simple, message based, MMO Scale TCP networking in Go. And no magic.
 
 ## Usage samples
