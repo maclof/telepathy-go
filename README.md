@@ -25,7 +25,10 @@ import (
 
 func main() {
 	server := telepathy.NewServer()
-	go server.Start(1337)
+	err := server.Start(1337)
+	if err != nil {
+		log.Fatalf("Failed to start telepathy server: %s", err.Error())
+	}
 
 	for {
 		msg := server.GetNextMessage()

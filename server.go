@@ -67,13 +67,6 @@ func (server *Server) Start(port int) error {
 	go server.handleConnections()
 	go server.processSendQueue()
 
-	for {
-		if !server.isRunning {
-			break
-		}
-		time.Sleep(time.Millisecond * 10)
-	}
-
 	return nil
 }
 
@@ -104,6 +97,7 @@ func (server *Server) handleConnections() {
 			conn: conn,
 			connId: server.nextConnectionId(),
 			connected: true,
+			connectTime: time.Now().Unix(),
 			sendQueue: goconcurrentqueue.NewFIFO(),
 		}
 
@@ -123,6 +117,7 @@ func (server *Server) handleClientConnection(client *serverClient) {
 	server.receiveQueue.Enqueue(&Message{
 		EventType: MessageEventType_Connected,
 		ConnectionId: client.connId,
+		ConnectTime: client.connectTime,
 	})
 
 	var recvHeaderBuf []byte
@@ -183,6 +178,7 @@ func (server *Server) handleClientConnection(client *serverClient) {
 		server.receiveQueue.Enqueue(&Message{
 			EventType: MessageEventType_Data,
 			ConnectionId: client.connId,
+			ConnectTime: client.connectTime,
 			Data: recvDataBuf,
 		})
 	}
@@ -198,6 +194,7 @@ func (server *Server) handleClientDisconnection(client *serverClient) {
 	server.receiveQueue.Enqueue(&Message{
 		EventType: MessageEventType_Disconnected,
 		ConnectionId: client.connId,
+		ConnectTime: client.connectTime,
 	})
 }
 
@@ -255,10 +252,33 @@ func (server *Server) Send(connId int, data []byte) {
 	}
 }
 
+func (server *Server) Disconnect(connId int) {
+	server.connectedClientsMutex.Lock()
+	clientInterface, clientExists := server.connectedClients.Get(connId)
+	server.connectedClientsMutex.Unlock()
+
+	if !clientExists {
+		return
+	}
+
+	client := clientInterface.(*serverClient)
+
+	log.Printf("Force disconnecting client: %d", client.connId)
+
+	err := client.conn.Close()
+	if err != nil {
+		log.Printf("Failed to disconnect client: %s", err.Error())
+		return
+	}
+
+	log.Println("Successfully disconnected client.")
+}
+
 type serverClient struct {
 	conn           net.Conn
 	connId         int
 	connected      bool
+	connectTime    int64
 	sendQueue      *goconcurrentqueue.FIFO
 	sendQueueMutex sync.Mutex
 }

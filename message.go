@@ -13,5 +13,6 @@ const (
 type Message struct {
 	EventType    byte
 	ConnectionId int
+	ConnectTime  int64
 	Data         []byte
 }
