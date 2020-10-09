@@ -202,6 +202,7 @@ func (server *Server) processSendQueue() {
 	for {
 		msgInterface, err := server.sendQueue.Dequeue()
 		if err != nil {
+			time.Sleep(time.Millisecond * 10)
 			continue
 		}
 
